@@ -5,11 +5,18 @@
 [![MCP](https://img.shields.io/badge/MCP-Compatible-blue)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎁 Free for Agent Developers
+## 💰 Launch Special: $49/month
 
-**50 leads/month free for 3 months.** No credit card required.
+**50% OFF - First 10 customers only**
 
-Email [luca@orelis.ai](mailto:luca@orelis.ai?subject=LeadAgent%20Beta%20Access) with your project details.
+- 500 leads/month (10x more than "free" tier)
+- All features unlocked
+- Priority setup assistance
+- Cancel anytime
+
+**Email luca@orelis.ai to start TODAY.**
+
+Normal price: $99/month. Launch special ends when 10 slots fill.
 
 ---
 
