@@ -265,6 +265,39 @@ class LeadAgentMCPServer {
             required: ['campaignId'],
           },
         },
+        {
+          name: 'preview_message_templates',
+          description: 'Preview and customize outreach message templates before generating leads. See example messages with different tones (professional, friendly, direct) and customize the format. You can specify your own template variables and see how they render with sample data. Perfect for ensuring your outreach matches your brand voice before batch generation.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              industry: {
+                type: 'string',
+                description: 'Target industry for preview',
+              },
+              purpose: {
+                type: 'string',
+                description: 'Purpose of outreach',
+              },
+              tone: {
+                type: 'string',
+                enum: ['professional', 'friendly', 'direct', 'consultant', 'partner'],
+                description: 'Tone of the message',
+                default: 'professional',
+              },
+              includeValueProp: {
+                type: 'boolean',
+                description: 'Include specific value proposition in preview',
+                default: true,
+              },
+              customTemplate: {
+                type: 'string',
+                description: 'Optional custom template with {{company}}, {{role}}, {{purpose}} placeholders',
+              },
+            },
+            required: ['industry', 'purpose'],
+          },
+        },
       ],
     }));
 
@@ -291,6 +324,8 @@ class LeadAgentMCPServer {
             return await this.enrichContactInfo(args);
           case 'get_campaign_analytics':
             return await this.getCampaignAnalytics(args);
+          case 'preview_message_templates':
+            return await this.previewMessageTemplates(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -1041,6 +1076,97 @@ class LeadAgentMCPServer {
         isError: true,
       };
     }
+  }
+
+  async previewMessageTemplates(args) {
+    const { 
+      industry, 
+      purpose, 
+      tone = 'professional', 
+      includeValueProp = true,
+      customTemplate 
+    } = args;
+
+    // Sample company data for preview
+    const sampleCompany = {
+      company: 'Acme Corp',
+      role: 'CEO',
+      website: 'acme.com',
+      description: `Leading ${industry} company`,
+    };
+
+    // Template generators by tone
+    const templates = {
+      professional: (data) => ({
+        subject: `${purpose} - ${data.company}`,
+        body: `Hi,\n\nI came across ${data.company} while researching ${purpose} opportunities in the ${industry} space.\n\n${includeValueProp ? 'We specialize in helping companies like yours achieve measurable results through proven strategies.\n\n' : ''}Would you be open to a brief conversation about how we might collaborate?\n\nBest regards`,
+      }),
+      
+      friendly: (data) => ({
+        subject: `Quick question about ${data.company}`,
+        body: `Hey!\n\nI've been following ${data.company} and love what you're doing in ${industry}.\n\n${includeValueProp ? 'We work with companies in your space on ${purpose} and consistently see great results.\n\n' : ''}Would love to connect and see if there's a fit!\n\nCheers`,
+      }),
+      
+      direct: (data) => ({
+        subject: `${purpose} for ${data.company}`,
+        body: `${data.role},\n\n${data.company} could benefit from ${purpose}.\n\n${includeValueProp ? 'We've helped similar companies in ${industry} achieve X% improvement in Y.\n\n' : ''}15-minute call this week?\n\nRegards`,
+      }),
+      
+      consultant: (data) => ({
+        subject: `Insight: ${industry} ${purpose}`,
+        body: `Hello,\n\nI noticed ${data.company} is in the ${industry} space. Based on recent trends, companies like yours are seeing success with ${purpose}.\n\n${includeValueProp ? 'We've analyzed this extensively and can share specific recommendations tailored to your situation.\n\n' : ''}Would you find a brief consultation valuable?\n\nBest`,
+      }),
+      
+      partner: (data) => ({
+        subject: `Partnership opportunity - ${data.company}`,
+        body: `Hi,\n\nI believe there's strong potential for ${data.company} and our organization to collaborate on ${purpose}.\n\n${includeValueProp ? 'Our complementary strengths in the ${industry} sector could create significant mutual value.\n\n' : ''}Open to exploring this?\n\nLooking forward`,
+      }),
+    };
+
+    let preview;
+    
+    if (customTemplate) {
+      // Process custom template with placeholders
+      const rendered = customTemplate
+        .replace(/\{\{company\}\}/g, sampleCompany.company)
+        .replace(/\{\{role\}\}/g, sampleCompany.role)
+        .replace(/\{\{purpose\}\}/g, purpose)
+        .replace(/\{\{industry\}\}/g, industry)
+        .replace(/\{\{website\}\}/g, sampleCompany.website);
+      
+      preview = {
+        custom: {
+          rendered,
+          note: 'This is your custom template rendered with sample data',
+        },
+      };
+    } else {
+      // Show selected tone or all tones
+      const selectedTemplate = templates[tone];
+      preview = {
+        selectedTone: tone,
+        preview: selectedTemplate(sampleCompany),
+        availableTones: Object.keys(templates),
+        note: 'Use "tone" parameter to switch between templates, or provide "customTemplate" to use your own',
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            industry,
+            purpose,
+            sampleData: sampleCompany,
+            ...preview,
+            nextSteps: customTemplate 
+              ? 'Use this customTemplate in generate_leads to apply it to all leads'
+              : `Use generate_leads with tone="${tone}" to generate leads with this message style`,
+          }, null, 2),
+        },
+      ],
+    };
   }
 
   async run() {

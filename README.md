@@ -58,7 +58,7 @@ Fully automated B2B lead generation from zero to personalized outreach messages 
 
 ## MCP Server Tools
 
-LeadAgent exposes 9 powerful tools via MCP protocol:
+LeadAgent exposes 10 powerful tools via MCP protocol:
 
 1. **generate_leads** - Generate qualified B2B leads for industry + location
 2. **get_campaign_leads** - Retrieve leads from a campaign
@@ -68,7 +68,8 @@ LeadAgent exposes 9 powerful tools via MCP protocol:
 6. **batch_generate_leads** - Generate for multiple industries/locations in one call
 7. **deduplicate_leads** - Find and remove duplicate leads (by email/phone/company)
 8. **enrich_contact_info** - Find decision maker emails & LinkedIn profiles for any company
-9. **get_campaign_analytics** - Detailed campaign statistics & performance insights 🆕
+9. **get_campaign_analytics** - Detailed campaign statistics & performance insights
+10. **preview_message_templates** - Preview & customize outreach messages with different tones 🆕
 
 ## Tech Stack
 
