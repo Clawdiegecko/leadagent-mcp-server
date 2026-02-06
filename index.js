@@ -91,6 +91,25 @@ class LeadAgentMCPServer {
             required: ['campaignId'],
           },
         },
+        {
+          name: 'export_leads_csv',
+          description: 'Export leads to CSV format for easy import into CRM, spreadsheets, or email tools.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              campaignId: {
+                type: 'string',
+                description: 'Campaign ID to export leads from',
+              },
+              includeMessages: {
+                type: 'boolean',
+                description: 'Include personalized outreach messages in export',
+                default: false,
+              },
+            },
+            required: ['campaignId'],
+          },
+        },
       ],
     }));
 
@@ -103,6 +122,8 @@ class LeadAgentMCPServer {
             return await this.generateLeads(args);
           case 'get_campaign_leads':
             return await this.getCampaignLeads(args);
+          case 'export_leads_csv':
+            return await this.exportLeadsCSV(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -225,6 +246,60 @@ class LeadAgentMCPServer {
         },
       ],
     };
+  }
+
+  async exportLeadsCSV(args) {
+    const { campaignId, includeMessages = false } = args;
+
+    const res = await axios.get(`${API_BASE}/api/campaign/${campaignId}/leads`);
+    const leads = res.data.leads;
+
+    // CSV header
+    let csv = includeMessages
+      ? 'Company,Contact Name,Role,Email,Phone,Website,Description,Score,WhatsApp Message,Email Subject,Email Body\n'
+      : 'Company,Contact Name,Role,Email,Phone,Website,Description,Score\n';
+
+    // CSV rows
+    leads.forEach((lead) => {
+      const row = [
+        this.csvEscape(lead.company),
+        this.csvEscape(lead.name),
+        this.csvEscape(lead.role),
+        this.csvEscape(lead.email),
+        this.csvEscape(lead.phone),
+        this.csvEscape(lead.companyWebsite),
+        this.csvEscape(lead.companyDescription),
+        lead.score,
+      ];
+
+      if (includeMessages && lead.message) {
+        row.push(
+          this.csvEscape(lead.message.whatsapp),
+          this.csvEscape(lead.message.email.subject),
+          this.csvEscape(lead.message.email.body)
+        );
+      }
+
+      csv += row.join(',') + '\n';
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `CSV Export Ready (${leads.length} leads)\n\nSave this as leads.csv:\n\n${csv}`,
+        },
+      ],
+    };
+  }
+
+  csvEscape(value) {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
   }
 
   async run() {
