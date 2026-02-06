@@ -110,6 +110,25 @@ class LeadAgentMCPServer {
             required: ['campaignId'],
           },
         },
+        {
+          name: 'validate_leads',
+          description: 'Validate lead data quality - checks email format, phone format, and completeness. Returns quality score and issues found.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              campaignId: {
+                type: 'string',
+                description: 'Campaign ID to validate leads from',
+              },
+              minScore: {
+                type: 'number',
+                description: 'Minimum quality score to include (0-100)',
+                default: 0,
+              },
+            },
+            required: ['campaignId'],
+          },
+        },
       ],
     }));
 
@@ -124,6 +143,8 @@ class LeadAgentMCPServer {
             return await this.getCampaignLeads(args);
           case 'export_leads_csv':
             return await this.exportLeadsCSV(args);
+          case 'validate_leads':
+            return await this.validateLeads(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -300,6 +321,89 @@ class LeadAgentMCPServer {
       return '"' + str.replace(/"/g, '""') + '"';
     }
     return str;
+  }
+
+  async validateLeads(args) {
+    const { campaignId, minScore = 0 } = args;
+
+    const res = await axios.get(`${API_BASE}/api/campaign/${campaignId}/leads`);
+    const leads = res.data.leads;
+
+    const validatedLeads = leads.map((lead) => {
+      const issues = [];
+      let qualityScore = 100;
+
+      // Email validation
+      if (!lead.email || !this.isValidEmail(lead.email)) {
+        issues.push('Invalid or missing email');
+        qualityScore -= 40;
+      }
+
+      // Phone validation
+      if (!lead.phone || lead.phone.length < 8) {
+        issues.push('Invalid or missing phone');
+        qualityScore -= 20;
+      }
+
+      // Company website check
+      if (!lead.companyWebsite || !lead.companyWebsite.startsWith('http')) {
+        issues.push('Missing or invalid website');
+        qualityScore -= 15;
+      }
+
+      // Contact name check
+      if (!lead.name || lead.name.length < 2) {
+        issues.push('Missing contact name');
+        qualityScore -= 15;
+      }
+
+      // Description completeness
+      if (!lead.companyDescription || lead.companyDescription.length < 20) {
+        issues.push('Incomplete company description');
+        qualityScore -= 10;
+      }
+
+      return {
+        company: lead.company,
+        contactName: lead.name,
+        email: lead.email,
+        phone: lead.phone,
+        qualityScore: Math.max(0, qualityScore),
+        issues: issues.length > 0 ? issues : ['No issues found'],
+        passesMinScore: qualityScore >= minScore,
+      };
+    });
+
+    const passed = validatedLeads.filter((l) => l.passesMinScore);
+    const failed = validatedLeads.filter((l) => !l.passesMinScore);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              campaignId,
+              totalLeads: validatedLeads.length,
+              passed: passed.length,
+              failed: failed.length,
+              averageScore: Math.round(
+                validatedLeads.reduce((sum, l) => sum + l.qualityScore, 0) /
+                  validatedLeads.length
+              ),
+              leads: validatedLeads,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  isValidEmail(email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
   }
 
   async run() {
