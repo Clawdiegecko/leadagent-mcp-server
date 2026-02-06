@@ -58,7 +58,7 @@ Fully automated B2B lead generation from zero to personalized outreach messages 
 
 ## MCP Server Tools
 
-LeadAgent exposes 15 powerful tools via MCP protocol:
+LeadAgent exposes 16 powerful tools via MCP protocol:
 
 1. **generate_leads** - Generate qualified B2B leads for industry + location
 2. **get_campaign_leads** - Retrieve leads from a campaign
@@ -73,8 +73,9 @@ LeadAgent exposes 15 powerful tools via MCP protocol:
 11. **prioritize_leads** - Intelligently rank leads by conversion probability (hot/warm/cold)
 12. **update_lead_status** - Track lead status through sales pipeline (contacted/qualified/closed)
 13. **send_whatsapp_message** - Send WhatsApp messages via Business Cloud API
-14. **send_whatsapp_template** - Send approved template messages for cold outreach 🆕
+14. **send_whatsapp_template** - Send approved template messages for cold outreach
 15. **configure_conversation_handler** - Set up autonomous conversation handling for replies
+16. **get_lead_insights** - Analyze company signals for hyper-personalized outreach 🆕
 
 ## Tech Stack
 
