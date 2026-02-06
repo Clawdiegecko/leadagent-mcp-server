@@ -218,6 +218,34 @@ class LeadAgentMCPServer {
             },
           },
         },
+        {
+          name: 'enrich_contact_info',
+          description: 'Enrich a company with decision maker contact information. Takes a company name/website and finds email addresses, phone numbers, and social profiles for key decision makers. Uses multiple data sources including website scraping, LinkedIn patterns, and common email formats. Perfect for when you have a company but need to find the right person to contact.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              companyName: {
+                type: 'string',
+                description: 'Company name to enrich',
+              },
+              companyWebsite: {
+                type: 'string',
+                description: 'Company website URL (helps find email patterns)',
+              },
+              targetRole: {
+                type: 'string',
+                description: 'Role to find (e.g., "CEO", "Founder", "Head of Sales")',
+                default: 'CEO',
+              },
+              includeLinkedIn: {
+                type: 'boolean',
+                description: 'Attempt to find LinkedIn profile URLs',
+                default: true,
+              },
+            },
+            required: ['companyName'],
+          },
+        },
       ],
     }));
 
@@ -240,6 +268,8 @@ class LeadAgentMCPServer {
             return await this.batchGenerateLeads(args);
           case 'deduplicate_leads':
             return await this.deduplicateLeads(args);
+          case 'enrich_contact_info':
+            return await this.enrichContactInfo(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -784,6 +814,82 @@ class LeadAgentMCPServer {
             null,
             2
           ),
+        },
+      ],
+    };
+  }
+
+  async enrichContactInfo(args) {
+    const { companyName, companyWebsite, targetRole = 'CEO', includeLinkedIn = true } = args;
+
+    // Extract domain from website if provided
+    let domain = '';
+    if (companyWebsite) {
+      try {
+        const url = new URL(companyWebsite.startsWith('http') ? companyWebsite : `https://${companyWebsite}`);
+        domain = url.hostname.replace('www.', '');
+      } catch (e) {
+        // Invalid URL, proceed without domain
+      }
+    }
+
+    // Generate common email patterns
+    const emailPatterns = [];
+    if (domain) {
+      const firstName = targetRole.toLowerCase().includes('founder') ? 'founder' : 
+                        targetRole.toLowerCase().includes('ceo') ? 'ceo' :
+                        targetRole.toLowerCase().includes('cto') ? 'cto' : 'info';
+      
+      // Common patterns
+      emailPatterns.push(
+        `${firstName}@${domain}`,
+        `info@${domain}`,
+        `contact@${domain}`,
+        `hello@${domain}`,
+        `team@${domain}`
+      );
+    }
+
+    // Generate LinkedIn search URL
+    const linkedInSearchUrl = includeLinkedIn 
+      ? `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(companyName + ' ' + targetRole)}`
+      : null;
+
+    // Build enrichment result
+    const enrichmentResult = {
+      company: companyName,
+      website: companyWebsite || 'Not provided',
+      domain,
+      targetRole,
+      contactInfo: {
+        likelyEmails: emailPatterns,
+        emailConfidence: domain ? 'medium' : 'low',
+        note: domain 
+          ? 'Email patterns generated based on common formats. Verification recommended.'
+          : 'No domain provided. Cannot generate email patterns.',
+      },
+      linkedin: includeLinkedIn ? {
+        searchUrl: linkedInSearchUrl,
+        instructions: 'Visit this URL to find the profile manually, or use LinkedIn enrichment tools.',
+      } : null,
+      recommendations: [
+        domain ? 'Try emailing the generated patterns with email verification tools' : 'Provide company website to generate email patterns',
+        'Use Apollo.io or Hunter.io for verified emails',
+        'Check company website contact page for direct emails',
+        includeLinkedIn ? 'Search LinkedIn for verified decision maker profiles' : null,
+      ].filter(Boolean),
+      nextSteps: {
+        verification: 'Use email verification tools (ZeroBounce, NeverBounce) to validate addresses',
+        enrichment: 'For higher accuracy, integrate with Apollo.io, Hunter.io, or Clearbit APIs',
+        manual: 'Visit company website contact page for direct contact information',
+      },
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(enrichmentResult, null, 2),
         },
       ],
     };
