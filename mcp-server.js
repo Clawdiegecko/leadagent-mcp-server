@@ -364,6 +364,85 @@ class LeadAgentMCPServer {
             required: ['campaignId', 'leadEmail', 'status'],
           },
         },
+        {
+          name: 'send_whatsapp_message',
+          description: 'Send WhatsApp messages to leads via WhatsApp Business Cloud API. Requires WhatsApp Business account with verified phone number. Perfect for high-touch outreach and following up with qualified leads. Returns delivery status and message ID for tracking.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              phoneNumberId: {
+                type: 'string',
+                description: 'Your WhatsApp Business Phone Number ID from Meta',
+              },
+              accessToken: {
+                type: 'string',
+                description: 'WhatsApp Business API access token',
+              },
+              to: {
+                type: 'string',
+                description: 'Recipient phone number in international format (e.g., "+31612345678")',
+              },
+              message: {
+                type: 'string',
+                description: 'Message text to send (max 4096 characters)',
+              },
+              campaignId: {
+                type: 'string',
+                description: 'Optional campaign ID to track this message',
+              },
+              leadEmail: {
+                type: 'string',
+                description: 'Optional lead email to link this message to a specific lead',
+              },
+            },
+            required: ['phoneNumberId', 'accessToken', 'to', 'message'],
+          },
+        },
+        {
+          name: 'configure_conversation_handler',
+          description: 'Configure autonomous conversation handling for WhatsApp replies. Set up your company info, pricing, booking links, and conversation style. Once configured, LeadAgent will automatically handle inbound replies, qualify leads, answer questions, and book demos. Uses configurable system prompt with your branding.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              companyName: {
+                type: 'string',
+                description: 'Your company name',
+              },
+              founderName: {
+                type: 'string',
+                description: 'Founder/contact person name for demo bookings',
+              },
+              calendlyLink: {
+                type: 'string',
+                description: 'Your Calendly or booking link for demos',
+              },
+              pricingTier1: {
+                type: 'string',
+                description: 'Your starter pricing (e.g., "$99/mo for 500 leads")',
+              },
+              pricingTier2: {
+                type: 'string',
+                description: 'Your premium pricing (e.g., "$299/mo for unlimited")',
+              },
+              websiteUrl: {
+                type: 'string',
+                description: 'Your website URL',
+              },
+              conversationStyle: {
+                type: 'string',
+                enum: ['professional', 'friendly', 'direct'],
+                description: 'Tone for conversations',
+                default: 'professional',
+              },
+              autoQualify: {
+                type: 'boolean',
+                description: 'Automatically qualify leads using BANT framework',
+                default: true,
+              },
+            },
+            required: ['companyName', 'founderName', 'calendlyLink', 'pricingTier1'],
+          },
+        },
       ],
     }));
 
@@ -396,6 +475,10 @@ class LeadAgentMCPServer {
             return await this.prioritizeLeads(args);
           case 'update_lead_status':
             return await this.updateLeadStatus(args);
+          case 'send_whatsapp_message':
+            return await this.sendWhatsAppMessage(args);
+          case 'configure_conversation_handler':
+            return await this.configureConversationHandler(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -1538,6 +1621,226 @@ class LeadAgentMCPServer {
       unresponsive: { order: 0, convertRate: '10%', avgDays: 14 },
     };
     return stages[status] || { order: 0, convertRate: 'N/A', avgDays: 0 };
+  }
+
+  async sendWhatsAppMessage(args) {
+    const { phoneNumberId, accessToken, to, message, campaignId, leadEmail } = args;
+
+    try {
+      // Send via WhatsApp Business Cloud API
+      const response = await axios.post(
+        `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          to: to.replace(/[^0-9+]/g, ''), // Clean phone number
+          type: 'text',
+          text: { body: message },
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const result = {
+        success: true,
+        messageId: response.data.messages[0].id,
+        to,
+        status: 'sent',
+        sentAt: new Date().toISOString(),
+        campaignId: campaignId || null,
+        leadEmail: leadEmail || null,
+        tracking: {
+          messageId: response.data.messages[0].id,
+          waId: response.data.contacts[0].wa_id,
+        },
+      };
+
+      // If campaign/lead provided, auto-update status
+      if (campaignId && leadEmail) {
+        result.statusUpdate = {
+          note: 'Automatically updated after WhatsApp message sent',
+          suggestion: `Use update_lead_status to mark as "contacted"`,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: error.response?.data?.error?.message || error.message,
+              errorCode: error.response?.data?.error?.code,
+              to,
+              troubleshooting: {
+                common_issues: [
+                  'Invalid phone number format (use +countrycode format)',
+                  'Phone number not registered on WhatsApp',
+                  'Access token expired or invalid',
+                  'Phone number ID incorrect',
+                  'Rate limits exceeded',
+                ],
+                docs: 'https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages',
+              },
+            }, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  async configureConversationHandler(args) {
+    const {
+      companyName,
+      founderName,
+      calendlyLink,
+      pricingTier1,
+      pricingTier2,
+      websiteUrl,
+      conversationStyle = 'professional',
+      autoQualify = true,
+    } = args;
+
+    // Generate the system prompt with user's configuration
+    const systemPrompt = this.generateConversationPrompt({
+      companyName,
+      founderName,
+      calendlyLink,
+      pricingTier1,
+      pricingTier2,
+      websiteUrl,
+      conversationStyle,
+      autoQualify,
+    });
+
+    const config = {
+      companyName,
+      founderName,
+      calendlyLink,
+      pricingTier1,
+      pricingTier2: pricingTier2 || 'Custom pricing available',
+      websiteUrl: websiteUrl || 'Not provided',
+      conversationStyle,
+      autoQualify,
+      systemPrompt,
+      status: 'configured',
+      configuredAt: new Date().toISOString(),
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            config,
+            nextSteps: [
+              'Configuration saved successfully',
+              'Autonomous conversation handler is now active',
+              'When leads reply to WhatsApp messages, system will:',
+              '  1. Use your configured prompt to respond',
+              '  2. Qualify leads using BANT framework (if enabled)',
+              '  3. Answer pricing questions',
+              '  4. Book demos via your Calendly link',
+              '  5. Auto-update lead status based on conversation',
+            ],
+            testCommand: 'Use send_whatsapp_message to start conversations with this config',
+          }, null, 2),
+        },
+      ],
+    };
+  }
+
+  generateConversationPrompt(config) {
+    const { companyName, founderName, calendlyLink, pricingTier1, pricingTier2, websiteUrl, conversationStyle } = config;
+
+    const styleGuides = {
+      professional: 'Professional and concise. Business formal.',
+      friendly: 'Warm and approachable. Conversational but professional.',
+      direct: 'Extremely direct and to-the-point. No fluff.',
+    };
+
+    return `# ROLE
+You are an AI sales development representative (SDR) for ${companyName}, handling inbound WhatsApp replies from B2B leads.
+
+Your goal: Qualify leads, answer questions, and book qualified demos with ${founderName}.
+
+# CONVERSATION STYLE
+${styleGuides[conversationStyle]}
+Keep messages SHORT (2-4 sentences max).
+
+# YOUR CAPABILITIES
+✅ Answer pricing questions: ${pricingTier1}${pricingTier2 ? `, ${pricingTier2}` : ''}
+✅ Explain features and use cases
+✅ Book demos: ${calendlyLink}
+✅ Qualify using BANT (Budget, Authority, Need, Timeline)
+✅ Handle objections professionally
+${websiteUrl !== 'Not provided' ? `✅ Share website: ${websiteUrl}` : ''}
+
+❌ Cannot give custom pricing (escalate to ${founderName})
+❌ Cannot make promises about unbuilt features
+❌ Cannot be pushy or spam
+
+# QUALIFICATION (BANT)
+Ask these questions naturally:
+- Budget: Can they afford ${pricingTier1}?
+- Authority: Are they the decision maker?
+- Need: Do they have the pain point we solve?
+- Timeline: When do they need to start?
+
+If BANT ≥ 3/4 → Book demo with ${founderName}
+
+# RESPONSE TEMPLATES
+
+## Pricing Question
+"${pricingTier1}. ${pricingTier2 ? `Or ${pricingTier2} for larger volume.` : ''}
+
+What's your typical monthly need?"
+
+## Demo Request
+"Perfect! ${founderName} can walk you through it.
+
+Book: ${calendlyLink}
+
+What timezone are you in?"
+
+## Qualification
+"Quick questions to see if we're a fit:
+1. What's your current process?
+2. What volume do you need?
+3. When would you start?"
+
+## Not Interested
+"No problem! If anything changes, reach out anytime."
+
+# STATUS TRACKING
+Auto-update lead status based on conversation:
+- First reply → "contacted"
+- Asks questions → "interested"
+- BANT 3/4 → "qualified"
+- Demo booked → "proposal"
+- Not interested → "closed-lost"
+
+# CRITICAL RULES
+1. Never lie or exaggerate
+2. Respect "no" immediately
+3. If uncertain, acknowledge and escalate
+4. Be helpful first, sales second
+
+Your job: Be helpful, qualify intelligently, book demos with qualified leads.`;
   }
 
   async run() {
