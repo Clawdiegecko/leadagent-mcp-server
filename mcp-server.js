@@ -246,6 +246,25 @@ class LeadAgentMCPServer {
             required: ['companyName'],
           },
         },
+        {
+          name: 'get_campaign_analytics',
+          description: 'Get detailed analytics and statistics for a campaign. Shows total leads, average quality score, industry/location breakdown, contact info completeness, and recommendations for improvement. Perfect for understanding your lead pipeline and optimizing campaign performance.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              campaignId: {
+                type: 'string',
+                description: 'Campaign ID to analyze',
+              },
+              includeLeadBreakdown: {
+                type: 'boolean',
+                description: 'Include detailed per-lead analytics',
+                default: false,
+              },
+            },
+            required: ['campaignId'],
+          },
+        },
       ],
     }));
 
@@ -270,6 +289,8 @@ class LeadAgentMCPServer {
             return await this.deduplicateLeads(args);
           case 'enrich_contact_info':
             return await this.enrichContactInfo(args);
+          case 'get_campaign_analytics':
+            return await this.getCampaignAnalytics(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -893,6 +914,133 @@ class LeadAgentMCPServer {
         },
       ],
     };
+  }
+
+  async getCampaignAnalytics(args) {
+    const { campaignId, includeLeadBreakdown = false } = args;
+
+    try {
+      // Fetch campaign leads
+      const res = await axios.get(`${API_BASE}/api/campaign/${campaignId}/leads`);
+      const leads = res.data.leads;
+
+      if (!leads || leads.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                campaignId,
+                totalLeads: 0,
+                message: 'No leads found for this campaign',
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Calculate analytics
+      const totalLeads = leads.length;
+      const scores = leads.map(l => l.score || 0).filter(s => s > 0);
+      const avgScore = scores.length > 0 
+        ? Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length)
+        : 0;
+
+      // Email completeness
+      const withEmail = leads.filter(l => l.email && this.isValidEmail(l.email)).length;
+      const emailCompleteness = Math.round((withEmail / totalLeads) * 100);
+
+      // Phone completeness
+      const withPhone = leads.filter(l => l.phone && l.phone.length >= 8).length;
+      const phoneCompleteness = Math.round((withPhone / totalLeads) * 100);
+
+      // Website completeness
+      const withWebsite = leads.filter(l => l.companyWebsite && l.companyWebsite.startsWith('http')).length;
+      const websiteCompleteness = Math.round((withWebsite / totalLeads) * 100);
+
+      // Role breakdown
+      const roleBreakdown = {};
+      leads.forEach(lead => {
+        const role = lead.role || 'Unknown';
+        roleBreakdown[role] = (roleBreakdown[role] || 0) + 1;
+      });
+
+      // Quality distribution
+      const qualityDistribution = {
+        excellent: leads.filter(l => (l.score || 0) >= 80).length,
+        good: leads.filter(l => (l.score || 0) >= 60 && (l.score || 0) < 80).length,
+        fair: leads.filter(l => (l.score || 0) >= 40 && (l.score || 0) < 60).length,
+        poor: leads.filter(l => (l.score || 0) < 40).length,
+      };
+
+      // Recommendations
+      const recommendations = [];
+      if (emailCompleteness < 80) {
+        recommendations.push(`Email completeness is ${emailCompleteness}%. Use enrich_contact_info to find missing emails.`);
+      }
+      if (phoneCompleteness < 50) {
+        recommendations.push(`Phone completeness is ${phoneCompleteness}%. Consider adding phone enrichment sources.`);
+      }
+      if (avgScore < 70) {
+        recommendations.push(`Average quality score is ${avgScore}/100. Use validate_leads to identify and fix issues.`);
+      }
+      if (qualityDistribution.poor > totalLeads * 0.3) {
+        recommendations.push(`${qualityDistribution.poor} leads (${Math.round(qualityDistribution.poor/totalLeads*100)}%) have low quality scores. Consider filtering or re-generating.`);
+      }
+
+      const analytics = {
+        campaignId,
+        summary: {
+          totalLeads,
+          averageQualityScore: avgScore,
+          emailCompleteness: `${emailCompleteness}%`,
+          phoneCompleteness: `${phoneCompleteness}%`,
+          websiteCompleteness: `${websiteCompleteness}%`,
+        },
+        qualityDistribution: {
+          excellent: `${qualityDistribution.excellent} (${Math.round(qualityDistribution.excellent/totalLeads*100)}%)`,
+          good: `${qualityDistribution.good} (${Math.round(qualityDistribution.good/totalLeads*100)}%)`,
+          fair: `${qualityDistribution.fair} (${Math.round(qualityDistribution.fair/totalLeads*100)}%)`,
+          poor: `${qualityDistribution.poor} (${Math.round(qualityDistribution.poor/totalLeads*100)}%)`,
+        },
+        roleBreakdown,
+        recommendations: recommendations.length > 0 ? recommendations : ['Campaign looks good! All metrics are healthy.'],
+      };
+
+      if (includeLeadBreakdown) {
+        analytics.leadBreakdown = leads.map(lead => ({
+          company: lead.company,
+          contact: lead.name,
+          role: lead.role,
+          score: lead.score,
+          hasEmail: !!lead.email,
+          hasPhone: !!lead.phone,
+          hasWebsite: !!lead.companyWebsite,
+        }));
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(analytics, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: `Failed to fetch campaign analytics: ${error.message}`,
+              campaignId,
+            }, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   async run() {
