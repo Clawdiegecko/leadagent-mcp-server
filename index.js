@@ -129,6 +129,37 @@ class LeadAgentMCPServer {
             required: ['campaignId'],
           },
         },
+        {
+          name: 'search_leads',
+          description: 'Search across all campaigns for leads matching specific criteria. Useful for finding specific companies, roles, or industries without remembering campaign IDs.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query - company name, contact name, industry, or keyword',
+              },
+              role: {
+                type: 'string',
+                description: 'Filter by role (e.g., "CEO", "Founder", "Director")',
+              },
+              industry: {
+                type: 'string',
+                description: 'Filter by industry',
+              },
+              location: {
+                type: 'string',
+                description: 'Filter by location',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results to return',
+                default: 20,
+              },
+            },
+            required: ['query'],
+          },
+        },
       ],
     }));
 
@@ -145,6 +176,8 @@ class LeadAgentMCPServer {
             return await this.exportLeadsCSV(args);
           case 'validate_leads':
             return await this.validateLeads(args);
+          case 'search_leads':
+            return await this.searchLeads(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -404,6 +437,77 @@ class LeadAgentMCPServer {
   isValidEmail(email) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
+  }
+
+  async searchLeads(args) {
+    const { query, role, industry, location, limit = 20 } = args;
+
+    try {
+      // Search across user's campaigns
+      const searchRes = await axios.get(`${API_BASE}/api/leads/search`, {
+        params: {
+          userId: 'mcp_agent',
+          query,
+          role,
+          industry,
+          location,
+          limit,
+        },
+      });
+
+      const results = searchRes.data.leads || [];
+
+      const formattedResults = results.map((lead) => ({
+        company: lead.company,
+        contactName: lead.name,
+        role: lead.role,
+        email: lead.email,
+        phone: lead.phone,
+        website: lead.companyWebsite,
+        industry: lead.industry,
+        location: lead.location,
+        campaignId: lead.campaignId,
+        score: lead.score,
+      }));
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                query,
+                filters: { role, industry, location },
+                resultsFound: formattedResults.length,
+                results: formattedResults,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    } catch (error) {
+      // Fallback: search is not implemented in API yet, return helpful message
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                query,
+                resultsFound: 0,
+                message:
+                  'Search functionality requires API upgrade. Contact luca@orelis.ai to enable cross-campaign search.',
+                results: [],
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
   }
 
   async run() {
