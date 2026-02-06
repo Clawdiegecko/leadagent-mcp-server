@@ -160,6 +160,34 @@ class LeadAgentMCPServer {
             required: ['query'],
           },
         },
+        {
+          name: 'batch_generate_leads',
+          description: 'Generate leads for multiple industries/locations in one call. More efficient than calling generate_leads multiple times. Perfect for broad market research or building large databases.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              requests: {
+                type: 'array',
+                description: 'Array of lead generation requests',
+                items: {
+                  type: 'object',
+                  properties: {
+                    industry: { type: 'string' },
+                    location: { type: 'string' },
+                    count: { type: 'number', default: 5 },
+                  },
+                  required: ['industry', 'location'],
+                },
+              },
+              targetRole: {
+                type: 'string',
+                description: 'Target role for all requests',
+                default: 'Founder',
+              },
+            },
+            required: ['requests'],
+          },
+        },
       ],
     }));
 
@@ -178,6 +206,8 @@ class LeadAgentMCPServer {
             return await this.validateLeads(args);
           case 'search_leads':
             return await this.searchLeads(args);
+          case 'batch_generate_leads':
+            return await this.batchGenerateLeads(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -508,6 +538,57 @@ class LeadAgentMCPServer {
         ],
       };
     }
+  }
+
+  async batchGenerateLeads(args) {
+    const { requests, targetRole = 'Founder' } = args;
+
+    const results = [];
+    const errors = [];
+
+    for (const req of requests) {
+      try {
+        const result = await this.generateLeads({
+          industry: req.industry,
+          location: req.location,
+          count: req.count || 5,
+          targetRole,
+        });
+
+        results.push({
+          industry: req.industry,
+          location: req.location,
+          status: 'success',
+          leadsGenerated: result.content[0].text.match(/"leadsGenerated": (\d+)/)?.[1] || 0,
+        });
+      } catch (error) {
+        errors.push({
+          industry: req.industry,
+          location: req.location,
+          status: 'failed',
+          error: error.message,
+        });
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              totalRequests: requests.length,
+              successful: results.length,
+              failed: errors.length,
+              results,
+              errors: errors.length > 0 ? errors : undefined,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
   }
 
   async run() {
