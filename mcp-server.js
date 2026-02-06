@@ -443,6 +443,50 @@ class LeadAgentMCPServer {
             required: ['companyName', 'founderName', 'calendlyLink', 'pricingTier1'],
           },
         },
+        {
+          name: 'send_whatsapp_template',
+          description: 'Send approved WhatsApp template messages for cold outreach to new prospects. WhatsApp requires pre-approved templates for initial contact (24-hour rule). Once prospect replies, autonomous conversation handler takes over. Perfect for scaling cold outreach while staying compliant with WhatsApp Business policies.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              phoneNumberId: {
+                type: 'string',
+                description: 'Your WhatsApp Business Phone Number ID from Meta',
+              },
+              accessToken: {
+                type: 'string',
+                description: 'WhatsApp Business API access token',
+              },
+              to: {
+                type: 'string',
+                description: 'Recipient phone number in international format (e.g., "+31612345678")',
+              },
+              templateName: {
+                type: 'string',
+                description: 'Name of approved template in Meta Business Manager (e.g., "lead_gen_intro")',
+              },
+              templateLanguage: {
+                type: 'string',
+                description: 'Template language code (e.g., "en", "en_US", "id", "nl")',
+                default: 'en',
+              },
+              parameters: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Template parameter values in order (e.g., ["John", "Acme Corp", "B2B leads"])',
+              },
+              campaignId: {
+                type: 'string',
+                description: 'Optional campaign ID to track this outreach',
+              },
+              leadEmail: {
+                type: 'string',
+                description: 'Optional lead email to link this message to a specific lead',
+              },
+            },
+            required: ['phoneNumberId', 'accessToken', 'to', 'templateName', 'templateLanguage'],
+          },
+        },
       ],
     }));
 
@@ -479,6 +523,8 @@ class LeadAgentMCPServer {
             return await this.sendWhatsAppMessage(args);
           case 'configure_conversation_handler':
             return await this.configureConversationHandler(args);
+          case 'send_whatsapp_template':
+            return await this.sendWhatsAppTemplate(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -1841,6 +1887,130 @@ Auto-update lead status based on conversation:
 4. Be helpful first, sales second
 
 Your job: Be helpful, qualify intelligently, book demos with qualified leads.`;
+  }
+
+  async sendWhatsAppTemplate(args) {
+    const { 
+      phoneNumberId, 
+      accessToken, 
+      to, 
+      templateName, 
+      templateLanguage = 'en',
+      parameters = [],
+      campaignId,
+      leadEmail 
+    } = args;
+
+    try {
+      // Build template components
+      const components = [];
+      
+      // If parameters provided, add them as body components
+      if (parameters.length > 0) {
+        components.push({
+          type: 'body',
+          parameters: parameters.map(value => ({
+            type: 'text',
+            text: value
+          }))
+        });
+      }
+
+      // Send via WhatsApp Business Cloud API
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: to.replace(/[^0-9+]/g, ''), // Clean phone number
+        type: 'template',
+        template: {
+          name: templateName,
+          language: {
+            code: templateLanguage
+          },
+          components: components.length > 0 ? components : undefined
+        }
+      };
+
+      const response = await axios.post(
+        `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`,
+        payload,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const result = {
+        success: true,
+        messageId: response.data.messages[0].id,
+        to,
+        templateName,
+        templateLanguage,
+        parameters,
+        status: 'sent',
+        sentAt: new Date().toISOString(),
+        campaignId: campaignId || null,
+        leadEmail: leadEmail || null,
+        tracking: {
+          messageId: response.data.messages[0].id,
+          waId: response.data.contacts[0].wa_id,
+        },
+        nextSteps: [
+          'Template message sent successfully',
+          'When lead replies, autonomous conversation handler will take over',
+          'Lead will be automatically qualified using BANT framework',
+          'Use update_lead_status to mark as "contacted"'
+        ]
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorData = error.response?.data?.error;
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: errorData?.message || error.message,
+              errorCode: errorData?.code,
+              errorType: errorData?.error_subcode,
+              to,
+              templateName,
+              troubleshooting: {
+                common_issues: [
+                  'Template not approved in Meta Business Manager',
+                  'Template name spelling mismatch',
+                  'Wrong template language code',
+                  'Wrong number of parameters (check template definition)',
+                  'Phone number not on WhatsApp',
+                  'Access token expired',
+                  '24-hour window already open (use send_whatsapp_message instead)'
+                ],
+                how_to_create_templates: 'https://business.facebook.com/wa/manage/message-templates/',
+                approval_time: 'Templates usually take 1-2 business days for approval',
+                template_guidelines: [
+                  'No promotional language in header',
+                  'Must provide value to recipient',
+                  'Clear opt-out instructions',
+                  'No personalized URLs (use parameters)',
+                  'Follow Meta content policies'
+                ]
+              },
+            }, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   async run() {
