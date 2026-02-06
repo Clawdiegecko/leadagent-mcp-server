@@ -298,6 +298,36 @@ class LeadAgentMCPServer {
             required: ['industry', 'purpose'],
           },
         },
+        {
+          name: 'prioritize_leads',
+          description: 'Intelligently prioritize and rank leads based on multiple quality signals. Analyzes data completeness, company signals (website quality, description), contact info validity, and generates a priority score (0-100). Returns sorted list with "hot", "warm", or "cold" ratings and recommended next actions. Perfect for focusing outreach on highest-value leads first.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              campaignId: {
+                type: 'string',
+                description: 'Campaign ID to prioritize leads from',
+              },
+              sortBy: {
+                type: 'string',
+                enum: ['priority', 'quality', 'completeness', 'company_size'],
+                description: 'Primary sorting criteria',
+                default: 'priority',
+              },
+              minPriority: {
+                type: 'number',
+                description: 'Minimum priority score to include (0-100)',
+                default: 0,
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of leads to return',
+                default: 20,
+              },
+            },
+            required: ['campaignId'],
+          },
+        },
       ],
     }));
 
@@ -326,6 +356,8 @@ class LeadAgentMCPServer {
             return await this.getCampaignAnalytics(args);
           case 'preview_message_templates':
             return await this.previewMessageTemplates(args);
+          case 'prioritize_leads':
+            return await this.prioritizeLeads(args);
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -1167,6 +1199,192 @@ class LeadAgentMCPServer {
         },
       ],
     };
+  }
+
+  async prioritizeLeads(args) {
+    const { campaignId, sortBy = 'priority', minPriority = 0, limit = 20 } = args;
+
+    try {
+      // Fetch campaign leads
+      const res = await axios.get(`${API_BASE}/api/campaign/${campaignId}/leads`);
+      const leads = res.data.leads;
+
+      if (!leads || leads.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                campaignId,
+                totalLeads: 0,
+                message: 'No leads found for this campaign',
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Calculate priority score for each lead
+      const scoredLeads = leads.map(lead => {
+        let priorityScore = 0;
+        const signals = [];
+
+        // Email quality (30 points)
+        if (lead.email && this.isValidEmail(lead.email)) {
+          priorityScore += 30;
+          signals.push('valid_email');
+        } else if (lead.email) {
+          priorityScore += 10;
+          signals.push('has_email');
+        }
+
+        // Phone quality (20 points)
+        if (lead.phone && lead.phone.length >= 10) {
+          priorityScore += 20;
+          signals.push('valid_phone');
+        } else if (lead.phone) {
+          priorityScore += 5;
+          signals.push('has_phone');
+        }
+
+        // Website quality (20 points)
+        if (lead.companyWebsite && lead.companyWebsite.startsWith('http')) {
+          priorityScore += 20;
+          signals.push('valid_website');
+        }
+
+        // Description quality (15 points)
+        if (lead.companyDescription && lead.companyDescription.length > 50) {
+          priorityScore += 15;
+          signals.push('detailed_description');
+        } else if (lead.companyDescription) {
+          priorityScore += 5;
+          signals.push('has_description');
+        }
+
+        // Base quality score (15 points)
+        if (lead.score && lead.score >= 80) {
+          priorityScore += 15;
+          signals.push('high_quality');
+        } else if (lead.score && lead.score >= 60) {
+          priorityScore += 10;
+          signals.push('good_quality');
+        } else if (lead.score) {
+          priorityScore += 5;
+        }
+
+        // Determine rating
+        let rating;
+        let recommendedAction;
+        if (priorityScore >= 80) {
+          rating = 'hot';
+          recommendedAction = 'Contact immediately - high conversion probability';
+        } else if (priorityScore >= 60) {
+          rating = 'warm';
+          recommendedAction = 'Contact soon - good potential';
+        } else if (priorityScore >= 40) {
+          rating = 'lukewarm';
+          recommendedAction = 'Enrich data before contacting';
+        } else {
+          rating = 'cold';
+          recommendedAction = 'Low priority - consider enrichment or skip';
+        }
+
+        return {
+          ...lead,
+          priorityScore,
+          rating,
+          signals,
+          recommendedAction,
+        };
+      });
+
+      // Sort leads
+      let sortedLeads;
+      switch (sortBy) {
+        case 'priority':
+          sortedLeads = scoredLeads.sort((a, b) => b.priorityScore - a.priorityScore);
+          break;
+        case 'quality':
+          sortedLeads = scoredLeads.sort((a, b) => (b.score || 0) - (a.score || 0));
+          break;
+        case 'completeness':
+          sortedLeads = scoredLeads.sort((a, b) => b.signals.length - a.signals.length);
+          break;
+        case 'company_size':
+          // Fallback to priority if size not available
+          sortedLeads = scoredLeads.sort((a, b) => b.priorityScore - a.priorityScore);
+          break;
+        default:
+          sortedLeads = scoredLeads;
+      }
+
+      // Filter by minimum priority and limit
+      const filteredLeads = sortedLeads
+        .filter(lead => lead.priorityScore >= minPriority)
+        .slice(0, limit);
+
+      // Format results
+      const formattedLeads = filteredLeads.map(lead => ({
+        company: lead.company,
+        contact: lead.name,
+        role: lead.role,
+        email: lead.email,
+        phone: lead.phone,
+        website: lead.companyWebsite,
+        priorityScore: lead.priorityScore,
+        rating: lead.rating,
+        qualitySignals: lead.signals,
+        recommendedAction: lead.recommendedAction,
+      }));
+
+      // Summary stats
+      const ratingDistribution = {
+        hot: scoredLeads.filter(l => l.rating === 'hot').length,
+        warm: scoredLeads.filter(l => l.rating === 'warm').length,
+        lukewarm: scoredLeads.filter(l => l.rating === 'lukewarm').length,
+        cold: scoredLeads.filter(l => l.rating === 'cold').length,
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              campaignId,
+              sortBy,
+              summary: {
+                totalLeads: leads.length,
+                returningLeads: filteredLeads.length,
+                avgPriorityScore: Math.round(
+                  scoredLeads.reduce((sum, l) => sum + l.priorityScore, 0) / scoredLeads.length
+                ),
+                ratingDistribution,
+              },
+              topLeads: formattedLeads,
+              recommendations: [
+                `${ratingDistribution.hot} hot leads - contact these first`,
+                `${ratingDistribution.warm} warm leads - good follow-up targets`,
+                `${ratingDistribution.cold} cold leads - consider enrichment or deprioritize`,
+              ],
+            }, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: `Failed to prioritize leads: ${error.message}`,
+              campaignId,
+            }, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   async run() {
